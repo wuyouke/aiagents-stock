@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class NewsFlowAgents:
-    """新闻流量智能分析代理"""
+    """新闻流量智能分析代理 - 支持多个LLM提供商（Ollama/DeepSeek/OpenAI/Qwen等）"""
     
     def __init__(self, model: str = None):
         """
@@ -25,21 +25,22 @@ class NewsFlowAgents:
         """
         import config
         self.model = model or config.DEFAULT_MODEL_NAME
+        self.llm_provider = config.LLM_PROVIDER  # 记录当前LLM提供商
         self.deepseek_client = None
         self._init_client()
     
     def _init_client(self):
-        """初始化DeepSeek客户端"""
+        """初始化LLM客户端（支持Ollama/DeepSeek/OpenAI/Qwen等）"""
         try:
             from deepseek_client import DeepSeekClient
             self.deepseek_client = DeepSeekClient(model=self.model)
-            logger.info(f"✅ DeepSeek客户端初始化成功，模型: {self.model}")
+            logger.info(f"✅ LLM客户端初始化成功 | 提供商: {self.llm_provider} | 模型: {self.model}")
         except Exception as e:
-            logger.error(f"❌ DeepSeek客户端初始化失败: {e}")
+            logger.error(f"❌ LLM客户端初始化失败: {e}")
             self.deepseek_client = None
     
     def is_available(self) -> bool:
-        """检查AI是否可用"""
+        """检查LLM是否可用"""
         return self.deepseek_client is not None
     
     def sector_impact_agent(self, hot_topics: List[Dict], 

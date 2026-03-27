@@ -5,12 +5,23 @@
 使用pywencai获取主力资金净流入前100名股票，并进行智能筛选
 """
 
-from numpy.ma import minimum_fill_value
-import pandas as pd
-import pywencai
+import os
+import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Tuple
-import time
+
+import pandas as pd
+
+# 禁止 Node.js 弃用警告
+os.environ['NODE_NO_WARNINGS'] = '1'
+
+# 先应用 pywencai bug 修复，再导入
+try:
+    import pywencai_fix
+except:
+    pass
+import pywencai
+
 
 class MainForceStockSelector:
     """主力选股类"""
@@ -71,10 +82,12 @@ class MainForceStockSelector:
                 print(f"查询语句: {query[:100]}...")
                 
                 try:
-                    result = pywencai.get(query=query, loop=True)
+                    # 添加 retry 和 sleep 参数来改善连接问题
+                    result = pywencai.get(query=query, loop=True, retry=3, sleep=1, log=False)
                     
                     if result is None:
-                        print(f"  ⚠️ 方案{i}返回None，尝试下一个方案")
+                        print(f"  ⚠️ 方案{i}返回None（可能是网络问题或API无法解析查询），尝试下一个方案")
+                        time.sleep(2)
                         continue
                     
                     # 转换为DataFrame
@@ -82,6 +95,7 @@ class MainForceStockSelector:
                     
                     if df_result is None or df_result.empty:
                         print(f"  ⚠️ 方案{i}数据为空，尝试下一个方案")
+                        time.sleep(2)
                         continue
                     
                     # 成功获取数据
@@ -97,13 +111,18 @@ class MainForceStockSelector:
                     
                     return True, df_result, f"成功获取{len(df_result)}只股票数据"
                 
+                except AttributeError as e:
+                    # 这是 pywencai 库的 bug - params 返回 None
+                    print(f"  ⚠️ 方案{i}返回数据异常（API响应错误）: {str(e)[:50]}")
+                    time.sleep(2)
+                    continue
                 except Exception as e:
-                    print(f"  ❌ 方案{i}失败: {str(e)}")
-                    time.sleep(2)  # 失败后等待2秒再试
+                    print(f"  ❌ 方案{i}失败: {str(e)[:80]}")
+                    time.sleep(2)
                     continue
             
             # 所有方案都失败
-            error_msg = "所有查询方案都失败了，请检查网络或稍后重试"
+            error_msg = "所有查询方案都失败了，请检查网络连接或稍后重试。问财接口可能已停用或临时不可用。"
             print(f"\n❌ {error_msg}")
             return False, None, error_msg
         

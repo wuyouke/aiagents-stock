@@ -14,11 +14,13 @@ from deepseek_client import DeepSeekClient
 
 
 class MacroAnalysisAgents:
-    """宏观分析多智能体"""
+    """宏观分析多智能体 - 支持多个LLM提供商（Ollama/DeepSeek/OpenAI/Qwen等）"""
 
     def __init__(self, model: str | None = None) -> None:
         self.model = model or config.DEFAULT_MODEL_NAME
+        self.llm_provider = config.LLM_PROVIDER  # 记录当前LLM提供商
         self.client = DeepSeekClient(model=self.model)
+        print(f"✅ 宏观分析代理初始化 | 提供商: {self.llm_provider} | 模型: {self.model}")
 
     def macro_analyst_agent(self, context_text: str) -> Dict[str, Any]:
         prompt = f"""

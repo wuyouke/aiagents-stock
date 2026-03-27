@@ -4,9 +4,11 @@
 """
 
 import logging
-from typing import Dict, List, Optional
 from datetime import datetime, time
+from typing import Dict, List
+
 import pytz
+
 import config
 
 
@@ -15,18 +17,28 @@ class SmartMonitorDeepSeek:
 
     def __init__(self, api_key: str):
         """
-        初始化DeepSeek客户端
+        初始化AI客户端（支持DeepSeek和Ollama）
         
         Args:
-            api_key: DeepSeek API密钥
+            api_key: API密钥（Ollama时可为空）
         """
         self.api_key = api_key
-        self.base_url = config.DEEPSEEK_BASE_URL
+        self.provider = config.LLM_PROVIDER
+        self.model = config.DEFAULT_MODEL_NAME
+
+        # 根据提供商选择基础URL
+        if self.provider == "ollama":
+            self.base_url = config.OLLAMA_BASE_URL
+            self.model = config.OLLAMA_MODEL or "llama2"
+        else:
+            self.base_url = config.DEEPSEEK_BASE_URL
+
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         self.logger = logging.getLogger(__name__)
+        print(f"✅ AI客户端已初始化: 提供商={self.provider}, 模型={self.model}")
 
     def is_trading_time(self) -> bool:
         """
@@ -155,7 +167,9 @@ class SmartMonitorDeepSeek:
         """
         import requests
         
-        model = model or config.DEFAULT_MODEL_NAME
+        # 使用当前配置的模型，如果没有传入则使用默认
+        if not model:
+            model = self.model if self.provider == "ollama" else config.DEFAULT_MODEL_NAME
         
         payload = {
             "model": model,
@@ -174,7 +188,8 @@ class SmartMonitorDeepSeek:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            self.logger.error(f"DeepSeek API调用失败: {e}")
+            provider_name = "Ollama" if self.provider == "ollama" else "DeepSeek"
+            self.logger.error(f"{provider_name} API调用失败: {e}")
             raise
 
     def analyze_stock_and_decide(self, stock_code: str, market_data: Dict,
@@ -472,40 +487,81 @@ KDJ:
         # 主力动向: {mf.get('trend', '观望')}
         # """
 
-        prompt += "\n请基于以上数据，给出交易决策（JSON格式）。"
+        prompt += """
+请基于以上数据，给出交易决策。
         
+⚠️ 重要：必须严格按以下JSON格式返回，不要添加任何其他文本：
+{
+    "action": "BUY" 或 "SELL" 或 "HOLD",
+    "confidence": 一个0-100之间的数字,
+    "reasoning": "详细的决策理由",
+    "position_size_pct": 10-30,
+    "stop_loss_pct": 5.0,
+    "take_profit_pct": 10.0,
+    "risk_level": "low" 或 "medium" 或 "high",
+    "key_price_levels": {
+        "support": 支撑位数字,
+        "resistance": 阻力位数字,
+        "stop_loss": 止损位数字
+    }
+}
+
+记住：只返回JSON，不要返回其他任何文字！
+"""
+
         return prompt
 
     def _parse_decision(self, ai_response: str) -> Dict:
         """解析AI决策响应"""
         import json
+        import re
         
         try:
+            # 清理响应：移除控制字符和无效的转义序列
+            # 保留标准的 \n, \t 等，但移除其他控制字符
+            json_str = ai_response
+
+            # 移除控制字符（ASCII 0-31，除了 \t, \n, \r）
+            json_str = re.sub(r'[\x00-\x08\x0b-\x0c\x0e-\x1f\x7f]', '', json_str)
+
             # 尝试多种提取方式
-            if "```json" in ai_response.lower():
-                json_start = ai_response.lower().find("```json") + 7
-                json_end = ai_response.find("```", json_start)
-                json_str = ai_response[json_start:json_end].strip()
-            elif "```" in ai_response:
-                first_tick = ai_response.find("```")
-                json_start = ai_response.find("\n", first_tick) + 1
-                json_end = ai_response.find("```", json_start)
-                json_str = ai_response[json_start:json_end].strip()
-            elif "{" in ai_response and "}" in ai_response:
-                start_idx = ai_response.find('{')
-                end_idx = ai_response.rfind('}') + 1
-                json_str = ai_response[start_idx:end_idx]
-            else:
-                json_str = ai_response
+            if "```json" in json_str.lower():
+                json_start = json_str.lower().find("```json") + 7
+                json_end = json_str.find("```", json_start)
+                json_str = json_str[json_start:json_end].strip()
+            elif "```" in json_str:
+                first_tick = json_str.find("```")
+                json_start = json_str.find("\n", first_tick) + 1
+                json_end = json_str.find("```", json_start)
+                if json_end > json_start:
+                    json_str = json_str[json_start:json_end].strip()
             
+            # 如果还没有提取，尝试找 JSON 对象
+            if not json_str.strip().startswith('{'):
+                if "{" in json_str and "}" in json_str:
+                    start_idx = json_str.find('{')
+                    end_idx = json_str.rfind('}') + 1
+                    json_str = json_str[start_idx:end_idx]
+
+            # 再次清理 JSON 字符串内的控制字符
+            json_str = json_str.strip()
+            if not json_str:
+                raise ValueError("无法从响应中提取JSON")
+
+            # 尝试解析 JSON
             decision = json.loads(json_str)
             
             # 验证必需字段
             required_fields = ['action', 'confidence', 'reasoning']
             for field in required_fields:
                 if field not in decision:
-                    raise ValueError(f"缺少必需字段: {field}")
+                    decision[field] = 'HOLD' if field == 'action' else (0 if field == 'confidence' else '无法解析')
             
+            # 确保 action 是有效值
+            valid_actions = ['BUY', 'SELL', 'HOLD']
+            if decision.get('action', '').upper() not in valid_actions:
+                decision['action'] = 'HOLD'
+
             # 设置默认值
             decision.setdefault('position_size_pct', 20)
             decision.setdefault('stop_loss_pct', 5.0)
@@ -514,13 +570,25 @@ KDJ:
             
             return decision
             
+        except json.JSONDecodeError as e:
+            self.logger.error(f"JSON解析失败: {e}，响应内容: {ai_response[:200]}")
+            # 返回保守决策
+            return {
+                'action': 'HOLD',
+                'confidence': 0,
+                'reasoning': 'AI响应格式错误，已返回保守决策',
+                'position_size_pct': 0,
+                'stop_loss_pct': 5.0,
+                'take_profit_pct': 10.0,
+                'risk_level': 'high'
+            }
         except Exception as e:
             self.logger.error(f"解析AI决策失败: {e}")
             # 返回保守决策
             return {
                 'action': 'HOLD',
                 'confidence': 0,
-                'reasoning': f'AI响应解析失败: {str(e)}',
+                'reasoning': f'AI响应解析失败: {str(e)[:100]}',
                 'position_size_pct': 0,
                 'stop_loss_pct': 5.0,
                 'take_profit_pct': 10.0,

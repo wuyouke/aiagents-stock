@@ -1,27 +1,22 @@
-import streamlit as st
-import plotly.graph_objects as go
-import plotly.express as px
-import pandas as pd
-import json
-from datetime import datetime
-import time
-import base64
 import os
-import config
+import time
 
-from stock_data import StockDataFetcher
+import plotly.graph_objects as go
+import streamlit as st
+
+import config
 from ai_agents import StockAnalysisAgents
-from pdf_generator import display_pdf_export_section
-from database import db
-from monitor_manager import display_monitor_manager, get_monitor_summary
-from monitor_service import monitor_service
-from notification_service import notification_service
 from config_manager import config_manager
-from main_force_ui import display_main_force_selector
-from sector_strategy_ui import display_sector_strategy
+from database import db
 from longhubang_ui import display_longhubang
-from smart_monitor_ui import smart_monitor_ui
+from main_force_ui import display_main_force_selector
+from monitor_manager import display_monitor_manager
+from monitor_service import monitor_service
 from news_flow_ui import display_news_flow_monitor
+from pdf_generator import display_pdf_export_section
+from sector_strategy_ui import display_sector_strategy
+from smart_monitor_ui import smart_monitor_ui
+from stock_data import StockDataFetcher
 
 # 页面配置
 st.set_page_config(
@@ -814,17 +809,31 @@ def check_api_key():
 @st.cache_data(ttl=300)  # 缓存5分钟
 def get_stock_data(symbol, period):
     """获取股票数据（带缓存）"""
-    fetcher = StockDataFetcher()
-    stock_info = fetcher.get_stock_info(symbol)
-    stock_data = fetcher.get_stock_data(symbol, period)
+    try:
+        fetcher = StockDataFetcher()
+        stock_info = fetcher.get_stock_info(symbol)
+        stock_data = fetcher.get_stock_data(symbol, period)
 
-    if isinstance(stock_data, dict) and "error" in stock_data:
-        return stock_info, None, None
+        if isinstance(stock_data, dict) and "error" in stock_data:
+            print(f"❌ 数据获取错误: {stock_data['error']}")
+            return stock_info, None, None
 
-    stock_data_with_indicators = fetcher.calculate_technical_indicators(stock_data)
-    indicators = fetcher.get_latest_indicators(stock_data_with_indicators)
+        if stock_data is None:
+            print(f"❌ 股票数据为空")
+            return stock_info, None, None
 
-    return stock_info, stock_data_with_indicators, indicators
+        stock_data_with_indicators = fetcher.calculate_technical_indicators(stock_data)
+
+        if isinstance(stock_data_with_indicators, dict) and "error" in stock_data_with_indicators:
+            print(f"❌ 技术指标计算错误: {stock_data_with_indicators['error']}")
+            return stock_info, None, None
+
+        indicators = fetcher.get_latest_indicators(stock_data_with_indicators)
+
+        return stock_info, stock_data_with_indicators, indicators
+    except Exception as e:
+        print(f"❌ 获取股票数据异常: {type(e).__name__}: {str(e)}")
+        return None, None, None
 
 def parse_stock_list(stock_input):
     """解析股票代码列表
@@ -898,11 +907,15 @@ def analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
         # 1. 获取股票数据
         stock_info, stock_data, indicators = get_stock_data(symbol, period)
 
-        if "error" in stock_info:
-            return {"symbol": symbol, "error": stock_info['error'], "success": False}
+        if stock_info is None or isinstance(stock_info, dict) and "error" in stock_info:
+            error_msg = stock_info.get('error', '无法获取股票信息') if isinstance(stock_info, dict) else '无法获取股票信息'
+            print(f"❌ 股票信息获取失败: {error_msg}")
+            return {"symbol": symbol, "error": error_msg, "success": False}
 
-        if stock_data is None:
-            return {"symbol": symbol, "error": "无法获取股票历史数据", "success": False}
+        if stock_data is None or indicators is None:
+            error_msg = "无法获取股票历史数据或技术指标"
+            print(f"❌ {error_msg}")
+            return {"symbol": symbol, "error": error_msg, "success": False}
 
         # 2. 获取财务数据
         fetcher = StockDataFetcher()
@@ -1579,7 +1592,18 @@ def display_agents_analysis(agents_results):
 
             # 分析报告
             st.markdown("**📄 分析报告:**")
-            st.write(agent_result.get('analysis', '暂无分析'))
+            analysis = agent_result.get('analysis', '暂无分析')
+
+            # 检查是否是错误信息
+            if isinstance(analysis, str) and analysis.startswith('❌'):
+                # 显示为警告
+                st.warning(analysis)
+            elif isinstance(analysis, str) and ('API' in analysis or '失败' in analysis or 'Error' in analysis):
+                # 其他类型的错误
+                st.error(analysis)
+            else:
+                # 正常分析结果
+                st.write(analysis)
 
 def display_team_discussion(discussion_result):
     """显示团队讨论"""
@@ -2055,7 +2079,18 @@ def display_record_detail(record_id):
                 """, unsafe_allow_html=True)
 
                 st.markdown("**📄 分析报告:**")
-                st.write(agent_result.get('analysis', '暂无分析'))
+                analysis = agent_result.get('analysis', '暂无分析')
+
+                # 检查是否是错误信息
+                if isinstance(analysis, str) and analysis.startswith('❌'):
+                    # 显示为警告
+                    st.warning(analysis)
+                elif isinstance(analysis, str) and ('API' in analysis or '失败' in analysis or 'Error' in analysis):
+                    # 其他类型的错误
+                    st.error(analysis)
+                else:
+                    # 正常分析结果
+                    st.write(analysis)
 
     # 团队讨论
     st.subheader("🤝 分析团队讨论")

@@ -4,8 +4,9 @@
 """
 
 import os
+from datetime import datetime
+
 import pandas as pd
-from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # 加载环境变量
@@ -34,7 +35,7 @@ class DataSourceManager:
         else:
             print("ℹ️ 未配置Tushare Token，将仅使用Akshare数据源")
     
-    def get_stock_hist_data(self, symbol, start_date=None, end_date=None, adjust='qfq'):
+    def get_stock_hist_data(self, symbol, start_date=None, end_date=None, adjust='qfq', ensure_today=True):
         """
         获取股票历史数据（优先akshare，失败时使用tushare）
         
@@ -43,6 +44,7 @@ class DataSourceManager:
             start_date: 开始日期（格式：'20240101'或'2024-01-01'）
             end_date: 结束日期
             adjust: 复权类型（'qfq'前复权, 'hfq'后复权, ''不复权）
+            ensure_today: 是否确保包含最新的当日数据（默认True）
             
         Returns:
             DataFrame: 包含日期、开盘、收盘、最高、最低、成交量等列
@@ -53,11 +55,17 @@ class DataSourceManager:
         if end_date:
             end_date = end_date.replace('-', '')
         else:
+            # 确保end_date为当天日期，以获取最新数据
             end_date = datetime.now().strftime('%Y%m%d')
         
         # 优先使用akshare
         try:
             import akshare as ak
+            import socket
+
+            # 设置超时时间（秒）
+            socket.setdefaulttimeout(10)
+
             print(f"[Akshare] 正在获取 {symbol} 的历史数据...")
             
             df = ak.stock_zh_a_hist(
@@ -86,12 +94,17 @@ class DataSourceManager:
                 df['date'] = pd.to_datetime(df['date'])
                 print(f"[Akshare] ✅ 成功获取 {len(df)} 条数据")
                 return df
+            else:
+                print(f"[Akshare] ⚠️ 返回数据为空")
         except Exception as e:
-            print(f"[Akshare] ❌ 获取失败: {e}")
+            print(f"[Akshare] ❌ 获取失败: {type(e).__name__}: {str(e)[:100]}")
         
         # akshare失败，尝试tushare
         if self.tushare_available:
             try:
+                import socket
+                socket.setdefaulttimeout(15)  # Tushare 需要更长的超时
+
                 print(f"[Tushare] 正在获取 {symbol} 的历史数据（备用数据源）...")
                 
                 # 转换股票代码格式（添加市场后缀）
@@ -101,11 +114,7 @@ class DataSourceManager:
                 adj_dict = {'qfq': 'qfq', 'hfq': 'hfq', '': None}
                 adj = adj_dict.get(adjust, 'qfq')
                 
-                # 格式化日期
-                start = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}" if start_date else None
-                end = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}" if end_date else None
-                
-                # 获取数据
+                # 获取数据（增加超时控制）
                 df = self.tushare_api.daily(
                     ts_code=ts_code,
                     start_date=start_date,
@@ -130,11 +139,20 @@ class DataSourceManager:
                     
                     print(f"[Tushare] ✅ 成功获取 {len(df)} 条数据")
                     return df
+                else:
+                    print(f"[Tushare] ⚠️ 返回数据为空")
             except Exception as e:
-                print(f"[Tushare] ❌ 获取失败: {e}")
+                print(f"[Tushare] ❌ 获取失败: {type(e).__name__}: {str(e)[:100]}")
+        else:
+            print(f"[Tushare] ⚠️ Tushare 未配置或初始化失败")
         
         # 两个数据源都失败
-        print("❌ 所有数据源均获取失败")
+        print(f"❌ 无法获取 {symbol} 的历史数据（所有数据源均失败）")
+        print(f"   可能的原因：")
+        print(f"   1. 网络连接问题")
+        print(f"   2. 股票代码错误或已下市")
+        print(f"   3. 数据源服务暂时不可用")
+        print(f"   4. 日期范围无数据")
         return None
     
     def get_stock_basic_info(self, symbol):

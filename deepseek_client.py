@@ -1,19 +1,97 @@
-import openai
 import json
 from typing import Dict, List, Any, Optional
+
+import openai
+
 import config
 
+
 class DeepSeekClient:
-    """DeepSeek API客户端"""
-    
+    """LLM API 客户端（支持多个提供商）"""
+
     def __init__(self, model=None):
         self.model = model or config.DEFAULT_MODEL_NAME
+        self.provider = config.LLM_PROVIDER
+
+        # 根据提供商初始化客户端
+        if self.provider == "ollama":
+            self._init_ollama()
+        elif self.provider == "openai":
+            self._init_openai()
+        elif self.provider == "qwen":
+            self._init_qwen()
+        elif self.provider == "custom":
+            self._init_custom()
+        else:  # 默认使用 deepseek
+            self._init_deepseek()
+
+    def _init_deepseek(self):
+        """初始化 DeepSeek API"""
+        print(f"📌 使用 DeepSeek API (模型: {self.model})")
         self.client = openai.OpenAI(
             api_key=config.DEEPSEEK_API_KEY,
             base_url=config.DEEPSEEK_BASE_URL
         )
-        
-    def call_api(self, messages: List[Dict[str, str]], model: Optional[str] = None, 
+        self.provider = "deepseek"
+
+    def _init_ollama(self):
+        """初始化本地 Ollama 模型"""
+        model = config.OLLAMA_MODEL or "llama2"
+        print(f"📌 使用本地 Ollama 模型 (模型: {model})")
+
+        # 检查 Ollama 是否运行
+        try:
+            import requests
+            response = requests.get(f"{config.OLLAMA_BASE_URL.replace('/v1', '')}/api/tags", timeout=2)
+            if response.status_code == 200:
+                print("✅ Ollama 服务正在运行")
+            else:
+                print(f"⚠️ Ollama 返回错误: {response.status_code}")
+        except Exception as e:
+            print(f"⚠️ Ollama 服务未运行: {str(e)[:60]}")
+            print("   请运行: ollama serve")
+
+        self.client = openai.OpenAI(
+            api_key="not-needed",
+            base_url=config.OLLAMA_BASE_URL
+        )
+        self.model = model
+        self.provider = "ollama"
+
+    def _init_openai(self):
+        """初始化 OpenAI API"""
+        model = config.OPENAI_MODEL or "gpt-3.5-turbo"
+        print(f"📌 使用 OpenAI API (模型: {model})")
+        self.client = openai.OpenAI(
+            api_key=config.OPENAI_API_KEY,
+            base_url=config.OPENAI_BASE_URL
+        )
+        self.model = model
+        self.provider = "openai"
+
+    def _init_qwen(self):
+        """初始化阿里云 Qwen API"""
+        model = config.QWEN_MODEL or "qwen-plus"
+        print(f"📌 使用阿里云 Qwen API (模型: {model})")
+        self.client = openai.OpenAI(
+            api_key=config.QWEN_API_KEY,
+            base_url=config.QWEN_BASE_URL
+        )
+        self.model = model
+        self.provider = "qwen"
+
+    def _init_custom(self):
+        """初始化自定义 API"""
+        model = config.CUSTOM_MODEL or "default"
+        print(f"📌 使用自定义 API (模型: {model}, URL: {config.CUSTOM_BASE_URL})")
+        self.client = openai.OpenAI(
+            api_key=config.CUSTOM_API_KEY,
+            base_url=config.CUSTOM_BASE_URL
+        )
+        self.model = model
+        self.provider = "custom"
+
+    def call_api(self, messages: List[Dict[str, str]], model: Optional[str] = None,
                  temperature: float = 0.7, max_tokens: int = 2000) -> str:
         """调用DeepSeek API"""
         # 使用实例的模型，如果没有传入则使用默认模型
@@ -49,8 +127,27 @@ class DeepSeekClient:
             return result if result else "API返回空响应"
             
         except Exception as e:
-            return f"API调用失败: {str(e)}"
+            error_str = str(e)
     
+            # 处理特定错误
+            if "402" in error_str or "Insufficient Balance" in error_str:
+                return f"❌ API 调用失败: 余额不足。请登录 https://platform.deepseek.com/account/balance 充值账户。\n详细错误: {error_str}"
+            elif "401" in error_str or "Unauthorized" in error_str:
+                return f"❌ API 调用失败: API Key 无效或已过期。请检查 .env 文件中的 DEEPSEEK_API_KEY。\n详细错误: {error_str}"
+            elif "429" in error_str or "Rate limit" in error_str:
+                return f"❌ API 调用失败: 请求过于频繁。请稍后重试。\n详细错误: {error_str}"
+            elif "503" in error_str or "Service Unavailable" in error_str:
+                return f"❌ API 调用失败: DeepSeek 服务暂时不可用。请稍后重试。\n详细错误: {error_str}"
+            elif ("Connection" in error_str or "连接" in error_str) and self.provider == "ollama":
+                return (f"❌ API 调用失败: Ollama 服务未运行。\n\n"
+                       f"解决方案：请在新终端中运行以下命令启动 Ollama 服务\n"
+                       f"$ ollama serve\n\n"
+                       f"或者切换到其他 LLM 提供商：\n"
+                       f"在 .env 文件中修改: LLM_PROVIDER=qwen 或 deepseek\n"
+                       f"详细错误: {error_str}")
+            else:
+                return f"❌ API 调用失败: {error_str}"
+
     def technical_analysis(self, stock_info: Dict, stock_data: Any, indicators: Dict) -> str:
         """技术面分析"""
         prompt = f"""

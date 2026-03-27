@@ -1,13 +1,13 @@
-import yfinance as yf
-import akshare as ak
-import pandas as pd
-import numpy as np
-import ta
 from datetime import datetime, timedelta
-import requests
-import json
-import pywencai
+
+import akshare as ak
+import numpy as np
+import pandas as pd
+import ta
+import yfinance as yf
+
 from data_source_manager import data_source_manager
+
 
 class StockDataFetcher:
     """股票数据获取类"""
@@ -442,7 +442,7 @@ class StockDataFetcher:
                 adjust='qfq'
             )
             
-            if df is not None and not df.empty:
+            if df is not None and isinstance(df, pd.DataFrame) and not df.empty:
                 # 标准化列名为大写（与原有格式保持一致）
                 df = df.rename(columns={
                     'date': 'Date',
@@ -463,10 +463,16 @@ class StockDataFetcher:
                 print(f"✅ 成功获取 {symbol} 的历史数据，共 {len(df)} 条记录")
                 return df
             else:
-                return {"error": "所有数据源均无法获取历史数据"}
+                error_msg = "无法获取股票历史数据"
+                if df is None:
+                    error_msg += " (所有数据源均返回空值)"
+                print(f"❌ {error_msg}")
+                return {"error": error_msg}
                 
         except Exception as e:
-            return {"error": f"获取中国股票数据失败: {str(e)}"}
+            error_msg = f"获取中国股票数据失败: {type(e).__name__}: {str(e)}"
+            print(f"❌ {error_msg}")
+            return {"error": error_msg}
     
     def _get_hk_stock_data(self, symbol, period="1y"):
         """获取港股历史数据"""
@@ -513,14 +519,22 @@ class StockDataFetcher:
     def _get_us_stock_data(self, symbol, period="1y", interval="1d"):
         """获取美股历史数据"""
         try:
+            import socket
+            # 设置超时时间避免长时间等待
+            socket.setdefaulttimeout(10)
+
             ticker = yf.Ticker(symbol)
+            # 增加 timeout 参数
             df = ticker.history(period=period, interval=interval)
+
             if not df.empty:
                 return df
             else:
                 return {"error": "无法获取历史数据"}
+        except TimeoutError as e:
+            return {"error": f"获取美股数据超时（网络问题）: {str(e)[:50]}"}
         except Exception as e:
-            return {"error": f"获取美股数据失败: {str(e)}"}
+            return {"error": f"获取美股数据失败: {str(e)[:100]}"}
     
     def calculate_technical_indicators(self, df):
         """计算技术指标"""
