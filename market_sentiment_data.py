@@ -3,13 +3,15 @@
 使用akshare获取市场情绪相关指标，包括ARBR、恐慌指数、市场资金情绪等
 """
 
-import pandas as pd
-import numpy as np
-import akshare as ak
-from datetime import datetime, timedelta
-import warnings
-import sys
 import io
+import sys
+import warnings
+from datetime import datetime, timedelta
+
+import akshare as ak
+import numpy as np
+import pandas as pd
+
 from data_source_manager import data_source_manager
 
 warnings.filterwarnings('ignore')
@@ -44,7 +46,7 @@ class MarketSentimentDataFetcher:
         获取完整的市场情绪分析数据
         
         Args:
-            symbol: 股票代码
+            symbol: 股票代码或股票名称（汉字）
             stock_data: 股票历史数据（如果已有）
             
         Returns:
@@ -63,6 +65,20 @@ class MarketSentimentDataFetcher:
         }
         
         try:
+            # 检查是否为汉字输入
+            if self._contains_chinese(symbol):
+                from data_source_manager import data_source_manager
+                search_results = data_source_manager.search_stock_by_name(symbol)
+                if search_results:
+                    if len(search_results) == 1:
+                        symbol = search_results[0]['code']
+                    else:
+                        sentiment_data["error"] = f"找到{len(search_results)}只匹配股票，请输入更准确的股票名称"
+                        return sentiment_data
+                else:
+                    sentiment_data["error"] = f"未找到名称包含'{symbol}'的股票"
+                    return sentiment_data
+
             # 判断是否为中国股票
             is_chinese = self._is_chinese_stock(symbol)
             
@@ -116,6 +132,13 @@ class MarketSentimentDataFetcher:
         
         return sentiment_data
     
+    def _contains_chinese(self, symbol):
+        """检查是否包含汉字"""
+        for char in symbol:
+            if '\u4e00' <= char <= '\u9fff':  # 汉字的 Unicode 范围
+                return True
+        return False
+
     def _is_chinese_stock(self, symbol):
         """判断是否为中国股票"""
         return symbol.isdigit() and len(symbol) == 6

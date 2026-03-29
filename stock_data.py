@@ -21,12 +21,46 @@ class StockDataFetcher:
     def get_stock_info(self, symbol):
         """获取股票基本信息"""
         try:
+            symbol = symbol.strip()  # 移除首尾空格
+
+            # 检查是否为汉字输入
+            if self._contains_chinese(symbol):
+                # 尝试根据汉字名称搜索股票代码
+                search_results = self.data_source_manager.search_stock_by_name(symbol)
+
+                if search_results:
+                    if len(search_results) == 1:
+                        # 如果只有一个结果，直接使用该代码获取信息
+                        result = search_results[0]
+                        print(f"自动识别为：{result['name']}（{result['code']}）")
+                        return self._get_chinese_stock_info(result['code'])
+                    else:
+                        # 如果有多个结果，返回列表供用户选择
+                        results_info = {
+                            "message": f"找到 {len(search_results)} 只股票，请选择：",
+                            "results": []
+                        }
+                        for item in search_results:
+                            results_info["results"].append({
+                                "code": item['code'],
+                                "name": item['name'],
+                                "industry": item.get('industry', '未知')
+                            })
+                        return results_info
+                else:
+                    return {"error": f"未找到名称包含 '{symbol}' 的股票。请确认股票名称或输入股票代码，如：\n"
+                            f"  • A股：000001 或 SH000001 或 SZ000001\n"
+                            f"  • 港股：00700 或 HK00700\n"
+                            f"  • 美股：AAPL、TSLA 等"}
+
             # 处理中国A股
             if self._is_chinese_stock(symbol):
-                return self._get_chinese_stock_info(symbol)
+                normalized_symbol = self._normalize_chinese_code(symbol)
+                return self._get_chinese_stock_info(normalized_symbol)
             # 处理港股
             elif self._is_hk_stock(symbol):
-                return self._get_hk_stock_info(symbol)
+                normalized_symbol = self._normalize_hk_code(symbol)
+                return self._get_hk_stock_info(normalized_symbol)
             # 处理美股
             else:
                 return self._get_us_stock_info(symbol)
@@ -36,30 +70,88 @@ class StockDataFetcher:
     def get_stock_data(self, symbol, period="1y", interval="1d"):
         """获取股票历史数据"""
         try:
+            symbol = symbol.strip()  # 移除首尾空格
+
+            # 检查是否为汉字输入
+            if self._contains_chinese(symbol):
+                # 尝试根据汉字名称搜索股票代码
+                search_results = self.data_source_manager.search_stock_by_name(symbol)
+
+                if search_results:
+                    if len(search_results) == 1:
+                        # 如果只有一个结果，直接使用该代码获取数据
+                        result = search_results[0]
+                        print(f"自动识别为：{result['name']}（{result['code']}）")
+                        return self._get_chinese_stock_data(result['code'], period)
+                    else:
+                        # 如果有多个结果，返回列表供用户选择
+                        results_info = {
+                            "message": f"找到 {len(search_results)} 只股票，请选择：",
+                            "results": []
+                        }
+                        for item in search_results:
+                            results_info["results"].append({
+                                "code": item['code'],
+                                "name": item['name'],
+                                "industry": item.get('industry', '未知')
+                            })
+                        return results_info
+                else:
+                    return {"error": f"未找到名称包含 '{symbol}' 的股票。请确认股票名称或输入股票代码。"}
+
             if self._is_chinese_stock(symbol):
-                return self._get_chinese_stock_data(symbol, period)
+                normalized_symbol = self._normalize_chinese_code(symbol)
+                return self._get_chinese_stock_data(normalized_symbol, period)
             elif self._is_hk_stock(symbol):
-                return self._get_hk_stock_data(symbol, period)
+                normalized_symbol = self._normalize_hk_code(symbol)
+                return self._get_hk_stock_data(normalized_symbol, period)
             else:
                 return self._get_us_stock_data(symbol, period, interval)
         except Exception as e:
             return {"error": f"获取股票数据失败: {str(e)}"}
     
+    def _contains_chinese(self, symbol):
+        """检查是否包含汉字"""
+        for char in symbol:
+            if '\u4e00' <= char <= '\u9fff':  # 汉字的 Unicode 范围
+                return True
+        return False
+
     def _is_chinese_stock(self, symbol):
         """判断是否为中国A股"""
-        # 简单判断：包含数字且长度为6位的认为是中国A股
+        symbol = symbol.upper().strip()
+
+        # 支持 SH/SZ 前缀的A股代码
+        if symbol.startswith('SH') or symbol.startswith('SZ'):
+            code = symbol[2:]
+            return code.isdigit() and len(code) == 6
+
+        # 纯数字且长度为6位的A股代码
         return symbol.isdigit() and len(symbol) == 6
     
     def _is_hk_stock(self, symbol):
         """判断是否为港股"""
+        symbol = symbol.upper().strip()
+
         # 港股代码通常是1-5位数字，或者前面带HK/hk前缀
-        if symbol.upper().startswith('HK'):
-            return True
+        if symbol.startswith('HK'):
+            code = symbol[2:]
+            return code.isdigit() and 1 <= len(code) <= 5
+
         # 纯数字且长度在1-5位之间，认为可能是港股
+        # 但要排除A股的6位代码
         if symbol.isdigit() and 1 <= len(symbol) <= 5:
             return True
+
         return False
     
+    def _normalize_chinese_code(self, symbol):
+        """规范化A股代码，移除前缀保留6位数字"""
+        symbol = symbol.upper().strip()
+        if symbol.startswith('SH') or symbol.startswith('SZ'):
+            symbol = symbol[2:]
+        return symbol
+
     def _normalize_hk_code(self, symbol):
         """规范化港股代码为5位格式（如700 -> 00700）"""
         # 移除HK前缀
@@ -335,7 +427,7 @@ class StockDataFetcher:
         
         try:
             # 添加延迟避免频率限制
-            time.sleep(1)
+            time.sleep(2)
             
             ticker = yf.Ticker(symbol)
             
@@ -518,8 +610,13 @@ class StockDataFetcher:
     
     def _get_us_stock_data(self, symbol, period="1y", interval="1d"):
         """获取美股历史数据"""
+        import time
+        import socket
+
         try:
-            import socket
+            # 添加延迟避免频率限制
+            time.sleep(2)
+
             # 设置超时时间避免长时间等待
             socket.setdefaulttimeout(10)
 
@@ -534,6 +631,9 @@ class StockDataFetcher:
         except TimeoutError as e:
             return {"error": f"获取美股数据超时（网络问题）: {str(e)[:50]}"}
         except Exception as e:
+            error_msg = str(e).lower()
+            if "rate" in error_msg or "429" in error_msg or "too many" in error_msg:
+                return {"error": f"美股API频率限制，请稍后重试：{str(e)[:100]}"}
             return {"error": f"获取美股数据失败: {str(e)[:100]}"}
     
     def calculate_technical_indicators(self, df):
@@ -605,10 +705,27 @@ class StockDataFetcher:
     def get_financial_data(self, symbol):
         """获取详细财务数据"""
         try:
+            symbol = symbol.strip()  # 移除首尾空格
+
+            # 检查是否为汉字输入
+            if self._contains_chinese(symbol):
+                # 尝试根据汉字名称搜索股票代码
+                search_results = self.data_source_manager.search_stock_by_name(symbol)
+
+                if search_results:
+                    if len(search_results) == 1:
+                        symbol = search_results[0]['code']
+                    else:
+                        return {"error": f"找到{len(search_results)}只匹配股票，请输入更准确的股票名称"}
+                else:
+                    return {"error": f"未找到名称包含'{symbol}'的股票"}
+
             if self._is_chinese_stock(symbol):
-                return self._get_chinese_financial_data(symbol)
+                normalized_symbol = self._normalize_chinese_code(symbol)
+                return self._get_chinese_financial_data(normalized_symbol)
             elif self._is_hk_stock(symbol):
-                return self._get_hk_financial_data(symbol)
+                normalized_symbol = self._normalize_hk_code(symbol)
+                return self._get_hk_financial_data(normalized_symbol)
             else:
                 return self._get_us_financial_data(symbol)
         except Exception as e:

@@ -3,12 +3,13 @@
 使用akshare获取股票的最新新闻信息（替代qstock）
 """
 
-import pandas as pd
-import sys
 import io
+import sys
 import warnings
-from datetime import datetime, timedelta
+from datetime import datetime
+
 import akshare as ak
+import pandas as pd
 
 warnings.filterwarnings('ignore')
 
@@ -44,7 +45,7 @@ class QStockNewsDataFetcher:
         获取股票的新闻数据
         
         Args:
-            symbol: 股票代码（6位数字）
+            symbol: 股票代码（6位数字）或股票名称（汉字）
             
         Returns:
             dict: 包含新闻数据的字典
@@ -60,6 +61,20 @@ class QStockNewsDataFetcher:
             data["error"] = "qstock库未安装或不可用"
             return data
         
+        # 检查是否为汉字输入
+        if self._contains_chinese(symbol):
+            from data_source_manager import data_source_manager
+            search_results = data_source_manager.search_stock_by_name(symbol)
+            if search_results:
+                if len(search_results) == 1:
+                    symbol = search_results[0]['code']
+                else:
+                    data["error"] = f"找到{len(search_results)}只匹配股票，请输入更准确的股票名称"
+                    return data
+            else:
+                data["error"] = f"未找到名称包含'{symbol}'的股票"
+                return data
+
         # 只支持中国股票
         if not self._is_chinese_stock(symbol):
             data["error"] = "新闻数据仅支持中国A股股票"
@@ -84,6 +99,13 @@ class QStockNewsDataFetcher:
         
         return data
     
+    def _contains_chinese(self, symbol):
+        """检查是否包含汉字"""
+        for char in symbol:
+            if '\u4e00' <= char <= '\u9fff':  # 汉字的 Unicode 范围
+                return True
+        return False
+
     def _is_chinese_stock(self, symbol):
         """判断是否为中国股票"""
         return symbol.isdigit() and len(symbol) == 6

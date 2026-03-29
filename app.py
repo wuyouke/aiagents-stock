@@ -917,18 +917,21 @@ def analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
             print(f"❌ {error_msg}")
             return {"symbol": symbol, "error": error_msg, "success": False}
 
+        # 从 stock_info 中获取规范化后的代码
+        normalized_symbol = stock_info.get('symbol', symbol)
+
         # 2. 获取财务数据
         fetcher = StockDataFetcher()
-        financial_data = fetcher.get_financial_data(symbol)
+        financial_data = fetcher.get_financial_data(normalized_symbol)
 
         # 2.5 获取季报数据（仅A股）
         quarterly_data = None
         enable_fundamental = enabled_analysts_config.get('fundamental', True)
-        if enable_fundamental and fetcher._is_chinese_stock(symbol):
+        if enable_fundamental and fetcher._is_chinese_stock(normalized_symbol):
             try:
                 from quarterly_report_data import QuarterlyReportDataFetcher
                 quarterly_fetcher = QuarterlyReportDataFetcher()
-                quarterly_data = quarterly_fetcher.get_quarterly_reports(symbol)
+                quarterly_data = quarterly_fetcher.get_quarterly_reports(normalized_symbol)
             except:
                 pass
 
@@ -939,40 +942,40 @@ def analyze_single_stock_for_batch(symbol, period, enabled_analysts_config=None,
 
         # 3. 获取资金流向数据（akshare数据源，可选）
         fund_flow_data = None
-        if enable_fund_flow and fetcher._is_chinese_stock(symbol):
+        if enable_fund_flow and fetcher._is_chinese_stock(normalized_symbol):
             try:
                 from fund_flow_akshare import FundFlowAkshareDataFetcher
                 fund_flow_fetcher = FundFlowAkshareDataFetcher()
-                fund_flow_data = fund_flow_fetcher.get_fund_flow_data(symbol)
+                fund_flow_data = fund_flow_fetcher.get_fund_flow_data(normalized_symbol)
             except:
                 pass
 
         # 4. 获取市场情绪数据（可选）
         sentiment_data = None
-        if enable_sentiment and fetcher._is_chinese_stock(symbol):
+        if enable_sentiment and fetcher._is_chinese_stock(normalized_symbol):
             try:
                 from market_sentiment_data import MarketSentimentDataFetcher
                 sentiment_fetcher = MarketSentimentDataFetcher()
-                sentiment_data = sentiment_fetcher.get_market_sentiment_data(symbol, stock_data)
+                sentiment_data = sentiment_fetcher.get_market_sentiment_data(normalized_symbol, stock_data)
             except:
                 pass
 
         # 5. 获取新闻数据（qstock数据源，可选）
         news_data = None
-        if enable_news and fetcher._is_chinese_stock(symbol):
+        if enable_news and fetcher._is_chinese_stock(normalized_symbol):
             try:
                 from qstock_news_data import QStockNewsDataFetcher
                 news_fetcher = QStockNewsDataFetcher()
-                news_data = news_fetcher.get_stock_news(symbol)
+                news_data = news_fetcher.get_stock_news(normalized_symbol)
             except:
                 pass
 
         # 5.5 获取风险数据（限售解禁、大股东减持、重要事件，可选）
         risk_data = None
         enable_risk = enabled_analysts_config.get('risk', True)
-        if enable_risk and fetcher._is_chinese_stock(symbol):
+        if enable_risk and fetcher._is_chinese_stock(normalized_symbol):
             try:
-                risk_data = fetcher.get_risk_data(symbol)
+                risk_data = fetcher.get_risk_data(normalized_symbol)
             except:
                 pass
 
@@ -1182,6 +1185,9 @@ def run_stock_analysis(symbol, period):
             st.error("❌ 无法获取股票历史数据")
             return
 
+        # 从 stock_info 中获取规范化后的代码
+        normalized_symbol = stock_info.get('symbol', symbol)
+
         # 显示股票基本信息
         display_stock_info(stock_info, indicators)
         progress_bar.progress(20)
@@ -1193,18 +1199,18 @@ def run_stock_analysis(symbol, period):
         # 2. 获取财务数据
         status_text.text("📊 正在获取财务数据...")
         fetcher = StockDataFetcher()  # 创建fetcher实例
-        financial_data = fetcher.get_financial_data(symbol)
+        financial_data = fetcher.get_financial_data(normalized_symbol)
         progress_bar.progress(35)
 
         # 2.5 获取季报数据（仅在选择了基本面分析师且为A股时）
         enable_fundamental = st.session_state.get('enable_fundamental', True)
         quarterly_data = None
-        if enable_fundamental and fetcher._is_chinese_stock(symbol):
+        if enable_fundamental and fetcher._is_chinese_stock(normalized_symbol):
             status_text.text("📊 正在获取季报数据（akshare数据源）...")
             try:
                 from quarterly_report_data import QuarterlyReportDataFetcher
                 quarterly_fetcher = QuarterlyReportDataFetcher()
-                quarterly_data = quarterly_fetcher.get_quarterly_reports(symbol)
+                quarterly_data = quarterly_fetcher.get_quarterly_reports(normalized_symbol)
                 if quarterly_data and quarterly_data.get('data_success'):
                     income_count = quarterly_data.get('income_statement', {}).get('periods', 0) if quarterly_data.get('income_statement') else 0
                     balance_count = quarterly_data.get('balance_sheet', {}).get('periods', 0) if quarterly_data.get('balance_sheet') else 0
@@ -1215,7 +1221,7 @@ def run_stock_analysis(symbol, period):
             except Exception as e:
                 st.warning(f"⚠️ 获取季报数据时出错: {str(e)}")
                 quarterly_data = None
-        elif enable_fundamental and not fetcher._is_chinese_stock(symbol):
+        elif enable_fundamental and not fetcher._is_chinese_stock(normalized_symbol):
             st.info("ℹ️ 美股暂不支持季报数据")
         progress_bar.progress(37)
 
@@ -1226,12 +1232,12 @@ def run_stock_analysis(symbol, period):
 
         # 3. 获取资金流向数据（仅在选择了资金面分析师时，使用akshare数据源）
         fund_flow_data = None
-        if enable_fund_flow and fetcher._is_chinese_stock(symbol):
+        if enable_fund_flow and fetcher._is_chinese_stock(normalized_symbol):
             status_text.text("💰 正在获取资金流向数据（akshare数据源）...")
             try:
                 from fund_flow_akshare import FundFlowAkshareDataFetcher
                 fund_flow_fetcher = FundFlowAkshareDataFetcher()
-                fund_flow_data = fund_flow_fetcher.get_fund_flow_data(symbol)
+                fund_flow_data = fund_flow_fetcher.get_fund_flow_data(normalized_symbol)
                 if fund_flow_data and fund_flow_data.get('data_success'):
                     days = fund_flow_data.get('fund_flow_data', {}).get('days', 0) if fund_flow_data.get('fund_flow_data') else 0
                     st.info(f"✅ 成功获取 {days} 个交易日的资金流向数据")
@@ -1240,18 +1246,18 @@ def run_stock_analysis(symbol, period):
             except Exception as e:
                 st.warning(f"⚠️ 获取资金流向数据时出错: {str(e)}")
                 fund_flow_data = None
-        elif enable_fund_flow and not fetcher._is_chinese_stock(symbol):
+        elif enable_fund_flow and not fetcher._is_chinese_stock(normalized_symbol):
             st.info("ℹ️ 美股暂不支持资金流向数据")
         progress_bar.progress(40)
 
         # 4. 获取市场情绪数据（仅在选择了市场情绪分析师时）
         sentiment_data = None
-        if enable_sentiment and fetcher._is_chinese_stock(symbol):
+        if enable_sentiment and fetcher._is_chinese_stock(normalized_symbol):
             status_text.text("📊 正在获取市场情绪数据（ARBR等指标）...")
             try:
                 from market_sentiment_data import MarketSentimentDataFetcher
                 sentiment_fetcher = MarketSentimentDataFetcher()
-                sentiment_data = sentiment_fetcher.get_market_sentiment_data(symbol, stock_data)
+                sentiment_data = sentiment_fetcher.get_market_sentiment_data(normalized_symbol, stock_data)
                 if sentiment_data and sentiment_data.get('data_success'):
                     st.info("✅ 成功获取市场情绪数据（ARBR、换手率、涨跌停等）")
                 else:
@@ -1259,18 +1265,18 @@ def run_stock_analysis(symbol, period):
             except Exception as e:
                 st.warning(f"⚠️ 获取市场情绪数据时出错: {str(e)}")
                 sentiment_data = None
-        elif enable_sentiment and not fetcher._is_chinese_stock(symbol):
+        elif enable_sentiment and not fetcher._is_chinese_stock(normalized_symbol):
             st.info("ℹ️ 美股暂不支持市场情绪数据（ARBR等指标）")
         progress_bar.progress(45)
 
         # 5. 获取新闻数据（仅在选择了新闻分析师时，使用qstock数据源）
         news_data = None
-        if enable_news and fetcher._is_chinese_stock(symbol):
+        if enable_news and fetcher._is_chinese_stock(normalized_symbol):
             status_text.text("📰 正在获取新闻数据...")
             try:
                 from qstock_news_data import QStockNewsDataFetcher
                 news_fetcher = QStockNewsDataFetcher()
-                news_data = news_fetcher.get_stock_news(symbol)
+                news_data = news_fetcher.get_stock_news(normalized_symbol)
                 if news_data and news_data.get('data_success'):
                     news_count = news_data.get('news_data', {}).get('count', 0) if news_data.get('news_data') else 0
                     st.info(f"✅ 成功从东方财富获取个股 {news_count} 条新闻")
@@ -1279,17 +1285,17 @@ def run_stock_analysis(symbol, period):
             except Exception as e:
                 st.warning(f"⚠️ 获取新闻数据时出错: {str(e)}")
                 news_data = None
-        elif enable_news and not fetcher._is_chinese_stock(symbol):
+        elif enable_news and not fetcher._is_chinese_stock(normalized_symbol):
             st.info("ℹ️ 美股暂不支持新闻数据")
         progress_bar.progress(45)
 
         # 5.5 获取风险数据（仅在选择了风险管理师时，使用问财数据源）
         enable_risk = st.session_state.get('enable_risk', True)
         risk_data = None
-        if enable_risk and fetcher._is_chinese_stock(symbol):
+        if enable_risk and fetcher._is_chinese_stock(normalized_symbol):
             status_text.text("⚠️ 正在获取风险数据（限售解禁、大股东减持、重要事件）...")
             try:
-                risk_data = fetcher.get_risk_data(symbol)
+                risk_data = fetcher.get_risk_data(normalized_symbol)
                 if risk_data and risk_data.get('data_success'):
                     # 统计获取到的风险数据类型
                     risk_types = []
@@ -1309,7 +1315,7 @@ def run_stock_analysis(symbol, period):
             except Exception as e:
                 st.warning(f"⚠️ 获取风险数据时出错: {str(e)}")
                 risk_data = None
-        elif enable_risk and not fetcher._is_chinese_stock(symbol):
+        elif enable_risk and not fetcher._is_chinese_stock(normalized_symbol):
             st.info("ℹ️ 美股暂不支持风险数据（限售解禁、大股东减持等）")
         progress_bar.progress(50)
 

@@ -223,6 +223,79 @@ class DataSourceManager:
         
         return info
     
+    def search_stock_by_name(self, stock_name):
+        """
+        根据股票名称查询对应的股票代码
+
+        Args:
+            stock_name: 股票名称（汉字，如"贵州茅台"）
+
+        Returns:
+            list: 匹配的股票列表，每项包含 code, name, industry 等信息
+        """
+        results = []
+
+        # 优先使用akshare - 通过实时行情接口获取所有股票
+        try:
+            import akshare as ak
+            print(f"[Akshare] 正在搜索股票：'{stock_name}'...")
+
+            # 获取所有A股实时行情（包含所有上市股票）
+            stock_list_df = ak.stock_zh_a_spot_em()
+
+            if stock_list_df is not None and not stock_list_df.empty:
+                # 按名称模糊搜索（'名称'列）
+                # 注意：这个接口返回的列名是中文
+                if '名称' in stock_list_df.columns and '代码' in stock_list_df.columns:
+                    filtered_df = stock_list_df[stock_list_df['名称'].str.contains(stock_name, na=False)]
+
+                    if not filtered_df.empty:
+                        for _, row in filtered_df.iterrows():
+                            results.append({
+                                'code': row['代码'],
+                                'name': row['名称'],
+                                'industry': '未知',  # 该接口没有行业信息
+                                'symbol': row['代码']
+                            })
+                        print(f"[Akshare] ✅ 找到 {len(results)} 只匹配的股票")
+                        return results
+                    else:
+                        print(f"[Akshare] ⚠️ 未找到匹配的股票")
+        except Exception as e:
+            print(f"[Akshare] ❌ 搜索失败: {e}")
+
+        # akshare失败，尝试tushare
+        if self.tushare_available:
+            try:
+                print(f"[Tushare] 正在搜索股票：'{stock_name}'（备用数据源）...")
+
+                df = self.tushare_api.stock_basic(
+                    fields='ts_code,name,area,industry,market,list_date'
+                )
+
+                if df is not None and not df.empty:
+                    # 按名称模糊搜索
+                    filtered_df = df[df['name'].str.contains(stock_name, na=False)]
+
+                    if not filtered_df.empty:
+                        for _, row in filtered_df.iterrows():
+                            # 从ts_code中提取股票代码（如'000001.SZ' -> '000001'）
+                            code = row['ts_code'].split('.')[0] if '.' in row['ts_code'] else row['ts_code']
+                            results.append({
+                                'code': code,
+                                'name': row['name'],
+                                'industry': row.get('industry', '未知'),
+                                'symbol': code
+                            })
+                        print(f"[Tushare] ✅ 找到 {len(results)} 只匹配的股票")
+                        return results
+                    else:
+                        print(f"[Tushare] ⚠️ 未找到匹配的股票")
+            except Exception as e:
+                print(f"[Tushare] ❌ 搜索失败: {e}")
+
+        return results
+
     def get_realtime_quotes(self, symbol):
         """
         获取实时行情数据（优先akshare，失败时使用tushare）
