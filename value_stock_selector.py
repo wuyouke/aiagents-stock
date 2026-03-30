@@ -5,11 +5,10 @@
 使用pywencai获取低估值优质股票
 """
 
+from typing import Tuple, Optional
+
 import pandas as pd
 import pywencai
-from datetime import datetime
-from typing import Tuple, Optional
-import time
 
 
 class ValueStockSelector:
@@ -48,32 +47,78 @@ class ValueStockSelector:
             print(f"排序: 按流通市值由小到大")
             print(f"目标: 筛选前{top_n}只股票")
 
-            # 构建问财查询语句
-            query = (
-                "市盈率小于等于20，"
-                "市净率小于等于1.5，"
-                "股息率大于等于1%，"
-                "资产负债率小于等于30%，"
-                "非st，"
-                "非科创板，"
-                "非创业板，"
-                "按流通市值由小到大排名"
-            )
+            # 构建问财查询语句 - 使用多个备选方案，因为复杂查询容易失败
+            queries = [
+                # 方案1: 完整查询
+                (
+                    "市盈率小于等于20，"
+                    "市净率小于等于1.5，"
+                    "股息率大于等于1%，"
+                    "资产负债率小于等于30%，"
+                    "非st，"
+                    "非科创板，"
+                    "非创业板，"
+                    "按流通市值由小到大排名"
+                ),
+                # 方案2: 简化查询（去掉分数排序）
+                (
+                    "市盈率小于等于20，"
+                    "市净率小于等于1.5，"
+                    "股息率大于等于1%，"
+                    "资产负债率小于等于30%，"
+                    "非st，非科创板，非创业板"
+                ),
+                # 方案3: 进一步简化
+                (
+                    "市盈率小于等于20，"
+                    "市净率小于等于1.5，"
+                    "非st，非科创板，非创业板"
+                ),
+            ]
 
-            print(f"\n查询语句: {query}")
-            print(f"正在调用问财接口...")
+            result = None
+            df_result = None
 
-            # 调用pywencai
-            result = pywencai.get(query=query, loop=True)
+            for i, query in enumerate(queries, 1):
+                print(f"\n尝试方案 {i}/{len(queries)}...")
+                print(f"查询语句: {query[:80]}..." if len(query) > 80 else f"查询语句: {query}")
+                print(f"正在调用问财接口...")
 
-            if result is None:
-                return False, None, "问财接口返回None，请检查网络或稍后重试"
+                try:
+                    # 调用pywencai
+                    result = pywencai.get(query=query, loop=True, retry=2, sleep=1, log=False)
 
-            # 转换为DataFrame
-            df_result = self._convert_to_dataframe(result)
+                    if result is None:
+                        print(f"  ⚠️ 方案{i}返回None，尝试下一个方案")
+                        import time
+                        time.sleep(2)
+                        continue
+
+                    # 转换为DataFrame
+                    df_result = self._convert_to_dataframe(result)
+
+                    if df_result is None or df_result.empty:
+                        print(f"  ⚠️ 方案{i}数据为空，尝试下一个方案")
+                        import time
+                        time.sleep(2)
+                        continue
+
+                    print(f"  ✅ 方案{i}成功！获取到 {len(df_result)} 只股票")
+                    break
+
+                except AttributeError as e:
+                    print(f"  ⚠️ 方案{i}API响应错误: {str(e)[:50]}")
+                    import time
+                    time.sleep(2)
+                    continue
+                except Exception as e:
+                    print(f"  ❌ 方案{i}失败: {str(e)[:80]}")
+                    import time
+                    time.sleep(2)
+                    continue
 
             if df_result is None or df_result.empty:
-                return False, None, "未获取到符合条件的股票数据"
+                return False, None, "所有查询方案都失败了，问财接口可能不可用"
 
             print(f"✅ 成功获取 {len(df_result)} 只股票")
 

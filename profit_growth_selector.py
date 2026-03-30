@@ -7,6 +7,7 @@
 
 import logging
 from typing import Tuple, Optional
+
 import pandas as pd
 
 
@@ -36,27 +37,65 @@ class ProfitGrowthSelector:
         """
         try:
             import pywencai
+            import time
             
-            # 构建查询语句（按成交额由小至大排名）
-            query = (
-                "净利润增长率(净利润同比增长率)≥10%，"
-                "非科创板，"
-                "非创业板，"
-                "非ST，"
-                "深圳A股，"
-                "成交额由小至大排名"
-            )
+            # 构建查询语句 - 使用多个备选方案，因为复杂查询容易失败
+            queries = [
+                # 方案1: 完整查询
+                (
+                    "净利润增长率(净利润同比增长率)≥10%，"
+                    "非科创板，"
+                    "非创业板，"
+                    "非ST，"
+                    "深圳A股，"
+                    "成交额由小至大排名"
+                ),
+                # 方案2: 去掉排序
+                (
+                    "净利润增长率(净利润同比增长率)≥10%，"
+                    "非科创板，"
+                    "非创业板，"
+                    "非ST，"
+                    "深圳A股"
+                ),
+                # 方案3: 简化条件
+                (
+                    "净利润增长率≥10%，"
+                    "非科创板，"
+                    "非创业板，"
+                    "非ST"
+                ),
+            ]
             
-            self.logger.info(f"开始执行净利增长选股，查询条件: {query}")
+            result = None
             
-            # 调用pywencai
-            result = pywencai.get(query=query, loop=True)
+            for i, query in enumerate(queries, 1):
+                self.logger.info(f"尝试方案 {i}/{len(queries)}: {query[:80]}")
             
+                try:
+                    # 调用pywencai
+                    result = pywencai.get(query=query, loop=True, retry=2, sleep=1, log=False)
+
+                    if result is None or result.empty:
+                        self.logger.warning(f"方案 {i} 返回空结果，尝试下一个方案")
+                        time.sleep(2)
+                        continue
+
+                    self.logger.info(f"方案 {i} 成功，获取到 {len(result)} 只股票")
+                    break
+
+                except AttributeError as e:
+                    self.logger.warning(f"方案 {i} API错误: {str(e)[:50]}")
+                    time.sleep(2)
+                    continue
+                except Exception as e:
+                    self.logger.warning(f"方案 {i} 失败: {str(e)[:80]}")
+                    time.sleep(2)
+                    continue
+
             if result is None or result.empty:
-                self.logger.warning("未获取到符合条件的股票")
+                self.logger.warning("所有查询方案都失败了")
                 return False, None, "未找到符合条件的股票"
-            
-            self.logger.info(f"获取到 {len(result)} 只股票")
             
             # 取前N只
             if len(result) > top_n:

@@ -35,6 +35,8 @@ class MainForceStockSelector:
         """
         获取主力资金净流入前100名股票
         
+        注意：问财 API 对复杂查询的支持有限，因此采用"获取数据 + 客户端过滤"的两步法
+
         Args:
             start_date: 开始日期，格式如"2025年10月1日"，如果不提供则使用days_ago
             days_ago: 距今多少天
@@ -55,38 +57,34 @@ class MainForceStockSelector:
             print(f"{'='*60}")
             print(f"开始日期: {start_date}")
             print(f"目标: 获取主力资金净流入排名前100名股票")
-            
-            # 构建查询语句 - 使用多个备选方案，所有方案都要求计算区间涨跌幅
+            print(f"市值范围: {min_market_cap}亿 - {max_market_cap}亿")
+
+            # 使用简单的查询获取基础数据，然后在客户端进行过滤
+            # 问财 API 对复杂查询支持有限，所以采用简化查询
             queries = [
-                # 方案1: 完整查询（最优）
-                f"{start_date}以来主力资金净流入排名，并计算区间涨跌幅，市值{min_market_cap}-{max_market_cap}亿之间，非科创非st，"
-                f"所属同花顺行业，总市值，净利润，营收，市盈率，市净率，"
-                f"盈利能力评分，成长能力评分，营运能力评分，偿债能力评分，"
-                f"现金流评分，资产质量评分，流动性评分，资本充足性评分",
-                
-                # 方案2: 简化查询
-                f"{start_date}以来主力资金净流入，并计算区间涨跌幅，市值{min_market_cap}-{max_market_cap}亿，非科创非st，"
-                f"所属同花顺行业，总市值，净利润，营收，市盈率，市净率",
-                
-                # 方案3: 基础查询
-                f"{start_date}以来主力资金净流入排名，并计算区间涨跌幅，市值{min_market_cap}-{max_market_cap}亿，非科创非st，"
-                f"所属行业，总市值",
-                
-                # 方案4: 最简查询
-                f"{start_date}以来主力资金净流入前100名，并计算区间涨跌幅，市值{min_market_cap}-{max_market_cap}亿，非st非科创板，所属行业，总市值",
+                # 方案1: 基础查询 - 获取主力资金净流入前100名
+                "主力资金净流入前100名，所属行业，总市值，非st，非科创板",
+
+                # 方案2: 不带字段限定的查询
+                "主力资金净流入前100名，所属行业，总市值",
+
+                # 方案3: 最简查询
+                "主力资金净流入前100名",
             ]
             
+            result = None
+
             # 尝试不同的查询方案
             for i, query in enumerate(queries, 1):
                 print(f"\n尝试方案 {i}/{len(queries)}...")
-                print(f"查询语句: {query[:100]}...")
-                
+                print(f"查询语句: {query}")
+
                 try:
                     # 添加 retry 和 sleep 参数来改善连接问题
                     result = pywencai.get(query=query, loop=True, retry=3, sleep=1, log=False)
                     
                     if result is None:
-                        print(f"  ⚠️ 方案{i}返回None（可能是网络问题或API无法解析查询），尝试下一个方案")
+                        print(f"  ⚠️ 方案{i}返回None，尝试下一个方案")
                         time.sleep(2)
                         continue
                     
@@ -100,8 +98,7 @@ class MainForceStockSelector:
                     
                     # 成功获取数据
                     print(f"  ✅ 方案{i}成功！获取到 {len(df_result)} 只股票")
-                    self.raw_data = df_result
-                    
+
                     # 显示获取到的列名
                     print(f"\n获取到的数据字段:")
                     for col in df_result.columns[:15]:  # 只显示前15个字段
@@ -109,8 +106,9 @@ class MainForceStockSelector:
                     if len(df_result.columns) > 15:
                         print(f"  ... 还有 {len(df_result.columns) - 15} 个字段")
                     
-                    return True, df_result, f"成功获取{len(df_result)}只股票数据"
-                
+                    result = df_result
+                    break
+
                 except AttributeError as e:
                     # 这是 pywencai 库的 bug - params 返回 None
                     print(f"  ⚠️ 方案{i}返回数据异常（API响应错误）: {str(e)[:50]}")
@@ -121,16 +119,100 @@ class MainForceStockSelector:
                     time.sleep(2)
                     continue
             
-            # 所有方案都失败
-            error_msg = "所有查询方案都失败了，请检查网络连接或稍后重试。问财接口可能已停用或临时不可用。"
-            print(f"\n❌ {error_msg}")
-            return False, None, error_msg
-        
+            if result is None:
+                # 所有方案都失败
+                error_msg = "所有查询方案都失败了，请检查网络连接或稍后重试。问财接口可能已停用或临时不可用。"
+                print(f"\n❌ {error_msg}")
+                return False, None, error_msg
+
+            # 在客户端进行过滤（日期、市值、ST等条件）
+            df_result = self._filter_stocks(result, start_date, min_market_cap, max_market_cap)
+
+            if df_result is None or df_result.empty:
+                error_msg = "过滤后没有符合条件的股票"
+                print(f"\n❌ {error_msg}")
+                return False, None, error_msg
+
+            self.raw_data = result
+
+            print(f"\n✅ 过滤后获取 {len(df_result)} 只符合条件的股票")
+            return True, df_result, f"成功获取{len(df_result)}只股票数据"
+
         except Exception as e:
             error_msg = f"获取主力选股数据失败: {str(e)}"
             print(f"\n❌ {error_msg}")
+            import traceback
+            traceback.print_exc()
             return False, None, error_msg
     
+    def _filter_stocks(self, df: pd.DataFrame, start_date: str = None,
+                      min_market_cap: float = None, max_market_cap: float = None) -> pd.DataFrame:
+        """
+        在客户端过滤股票数据
+        由于问财 API 对复杂查询的支持有限，因此采用客户端过滤方案
+
+        Args:
+            df: 原始股票数据
+            start_date: 开始日期（用于日志显示）
+            min_market_cap: 最小市值（亿）
+            max_market_cap: 最大市值（亿）
+
+        Returns:
+            过滤后的DataFrame
+        """
+        try:
+            if df is None or df.empty:
+                return df
+
+            filtered_df = df.copy()
+            original_count = len(filtered_df)
+
+            # 1. 过滤 ST 股票
+            if '股票简称' in filtered_df.columns:
+                filtered_df = filtered_df[~filtered_df['股票简称'].astype(str).str.contains('ST', case=False, na=False)]
+                if len(filtered_df) < original_count:
+                    print(f"  已排除 ST 股票: {original_count} -> {len(filtered_df)}")
+                    original_count = len(filtered_df)
+
+            # 2. 过滤市值范围（如果提供了限制）
+            if min_market_cap is not None or max_market_cap is not None:
+                # 查找总市值列
+                market_cap_col = None
+                possible_cols = ['总市值', '总市值(亿)', '总市值(亿元)', 'market_cap']
+                for col in possible_cols:
+                    if col in filtered_df.columns:
+                        market_cap_col = col
+                        break
+
+                if market_cap_col:
+                    try:
+                        # 转换为数值
+                        filtered_df[market_cap_col] = pd.to_numeric(
+                            filtered_df[market_cap_col].astype(str).str.replace('亿', '').str.strip(),
+                            errors='coerce'
+                        )
+
+                        # 应用市值过滤
+                        before = len(filtered_df)
+                        if min_market_cap is not None:
+                            filtered_df = filtered_df[filtered_df[market_cap_col] >= min_market_cap]
+                        if max_market_cap is not None:
+                            filtered_df = filtered_df[filtered_df[market_cap_col] <= max_market_cap]
+
+                        if len(filtered_df) < before:
+                            print(f"  已过滤市值范围 [{min_market_cap}, {max_market_cap}]亿: {before} -> {len(filtered_df)}")
+                    except Exception as e:
+                        print(f"  市值过滤失败: {str(e)[:100]}")
+
+            print(f"  最终返回股票数: {len(filtered_df)}")
+            return filtered_df
+
+        except Exception as e:
+            print(f"  客户端过滤失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return df
+
     def _convert_to_dataframe(self, result) -> pd.DataFrame:
         """转换问财返回结果为DataFrame"""
         try:

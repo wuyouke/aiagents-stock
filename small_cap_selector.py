@@ -7,6 +7,7 @@
 
 import logging
 from typing import Tuple, Optional
+
 import pandas as pd
 
 
@@ -38,26 +39,69 @@ class SmallCapSelector:
         """
         try:
             import pywencai
+            import time
             
-            # 构建查询语句（按总市值由小至大排名）
-            query = (
-                "总市值≤50亿，"
-                "营收增长率≥10%，"
-                "净利润增长率(净利润同比增长率)≥100%，"
-                "沪深A股，"
-                "非ST，"
-                "非创业板，"
-                "非科创板，"
-                "总市值由小至大排名"
-            )
+            # 构建查询语句 - 使用多个备选方案，因为复杂查询容易失败
+            queries = [
+                # 方案1: 完整查询
+                (
+                    "总市值≤50亿，"
+                    "营收增长率≥10%，"
+                    "净利润增长率(净利润同比增长率)≥100%，"
+                    "沪深A股，"
+                    "非ST，"
+                    "非创业板，"
+                    "非科创板，"
+                    "总市值由小至大排名"
+                ),
+                # 方案2: 去掉排序
+                (
+                    "总市值≤50亿，"
+                    "营收增长率≥10%，"
+                    "净利润增长率(净利润同比增长率)≥100%，"
+                    "沪深A股，"
+                    "非ST，"
+                    "非创业板，"
+                    "非科创板"
+                ),
+                # 方案3: 简化条件
+                (
+                    "总市值≤50亿，"
+                    "净利润增长率≥100%，"
+                    "非ST，"
+                    "非创业板，"
+                    "非科创板"
+                ),
+            ]
             
-            self.logger.info(f"开始执行小市值策略选股，查询条件: {query}")
+            result = None
             
-            # 调用pywencai
-            result = pywencai.get(query=query, loop=True)
+            for i, query in enumerate(queries, 1):
+                self.logger.info(f"尝试方案 {i}/{len(queries)}: {query[:80]}")
             
+                try:
+                    # 调用pywencai
+                    result = pywencai.get(query=query, loop=True, retry=2, sleep=1, log=False)
+
+                    if result is None or result.empty:
+                        self.logger.warning(f"方案 {i} 返回空结果，尝试下一个方案")
+                        time.sleep(2)
+                        continue
+
+                    self.logger.info(f"方案 {i} 成功，获取到 {len(result)} 只股票")
+                    break
+
+                except AttributeError as e:
+                    self.logger.warning(f"方案 {i} API错误: {str(e)[:50]}")
+                    time.sleep(2)
+                    continue
+                except Exception as e:
+                    self.logger.warning(f"方案 {i} 失败: {str(e)[:80]}")
+                    time.sleep(2)
+                    continue
+
             if result is None or result.empty:
-                self.logger.warning("未获取到符合条件的股票")
+                self.logger.warning("所有查询方案都失败了")
                 return False, None, "未找到符合条件的股票"
             
             self.logger.info(f"获取到 {len(result)} 只股票")
